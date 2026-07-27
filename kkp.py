@@ -206,7 +206,7 @@ class GlassVideoFinder(ctk.CTk):
         self.loading = False
         self.scanner = VideoScanner(scan_subfolder=True)
 
-        # 新增：浏览器播放开关状态，默认 False（使用默认播放器）
+        # 浏览器播放开关状态，默认 False（使用默认播放器）
         self.use_browser = False
 
         self.build_ui()
@@ -227,6 +227,7 @@ class GlassVideoFinder(ctk.CTk):
         self.build_page1()
         self.build_page2()
 
+    # ---------- 首页 ----------
     def build_page1(self):
         main = ctk.CTkFrame(self.page1, fg_color=(Config.BG_LIGHT, Config.BG_DARK), corner_radius=0)
         main.pack(fill="both", expand=True)
@@ -258,22 +259,19 @@ class GlassVideoFinder(ctk.CTk):
                                         text_color=(Config.TEXT_SECONDARY_LIGHT, Config.TEXT_SECONDARY_DARK))
         self.empty_label.pack(pady=60)
 
-        # ========== 底部导航栏（已居中，且高度一致） ==========
+        # 底部导航栏
         nav = ctk.CTkFrame(main, fg_color="transparent")
         nav.pack(fill="x", padx=20, pady=(8, 14))
 
-        # 左侧：设置按钮
         self.btn_settings = ctk.CTkButton(nav, text="设置", width=80, height=34, corner_radius=8,
                                           fg_color="transparent", text_color=(Config.PRIMARY_BLUE, Config.PRIMARY_BLUE),
                                           hover_color=(Config.SEPARATOR_LIGHT, Config.SEPARATOR_DARK),
                                           command=partial(self.switch_page, "page2"))
         self.btn_settings.pack(side="left", padx=(0, 10), anchor="n")
 
-        # 右侧：透明占位框架（与设置按钮等宽等高，实现对称）
         spacer_right = ctk.CTkFrame(nav, fg_color="transparent", width=80, height=34)
         spacer_right.pack(side="right", padx=(10, 0), anchor="n")
 
-        # 中间：分页按钮组（自动居中）
         center = ctk.CTkFrame(nav, fg_color="transparent")
         center.pack(expand=True, anchor="n")
 
@@ -308,7 +306,7 @@ class GlassVideoFinder(ctk.CTk):
         self.load_label = ctk.CTkLabel(header, text="", font=ctk.CTkFont(size=14), text_color=Config.PRIMARY_BLUE)
         self.load_label.pack(side="right", padx=(0, 10))
 
-    # ==================== 设置页面（新增浏览器播放开关） ====================
+    # ---------- 设置页面 ----------
     def build_page2(self):
         container = ctk.CTkFrame(self.page2, fg_color=(Config.BG_LIGHT, Config.BG_DARK), corner_radius=0)
         container.pack(fill="both", expand=True)
@@ -319,60 +317,84 @@ class GlassVideoFinder(ctk.CTk):
         ctk.CTkLabel(top_frame, text="设置", font=ctk.CTkFont(size=28, weight="bold"),
                      text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK)).pack(side="left")
 
-        ctk.CTkLabel(top_frame, text="VF V1", font=ctk.CTkFont(size=12),
-                     text_color=Config.VERSION_GRAY).pack(side="right")
+        # 可点击版本号
+        version_label = ctk.CTkLabel(top_frame, text="VideoFind V6.44", font=ctk.CTkFont(size=12),
+                                     text_color=Config.VERSION_GRAY, cursor="hand2")
+        version_label.pack(side="right")
+        version_label.bind("<Button-1>", lambda e: self.show_about())
 
-        # ---- 扫描子文件夹开关 ----
+        # 扫描子文件夹
         card1 = ctk.CTkFrame(container, fg_color=(Config.CARD_LIGHT, Config.CARD_DARK), corner_radius=12)
         card1.pack(fill="x", padx=20, pady=10)
-
         sw_frame1 = ctk.CTkFrame(card1, fg_color="transparent")
         sw_frame1.pack(fill="x", padx=16, pady=12)
-
         ctk.CTkLabel(sw_frame1, text="扫描子文件夹", font=ctk.CTkFont(size=15),
                      text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK)).pack(side="left")
-
         self.subfolder_var = ctk.BooleanVar(value=self.scanner.scan_subfolder)
         sw1 = ctk.CTkSwitch(sw_frame1, text="", variable=self.subfolder_var,
                            command=self.toggle_subfolder,
                            progress_color=Config.PRIMARY_BLUE, button_color=Config.PRIMARY_BLUE)
         sw1.pack(side="right")
-
-        ctk.CTkLabel(container, text="开启：遍历所有子文件夹\n关闭：仅扫描所选文件夹根目录",
+        ctk.CTkLabel(container, text="开启：扫描全部子文件夹\n关闭：仅当前文件夹",
                      font=ctk.CTkFont(size=13),
                      text_color=(Config.TEXT_SECONDARY_LIGHT, Config.TEXT_SECONDARY_DARK),
                      justify="left").pack(anchor="w", padx=20, pady=(5, 10))
 
-        # ---- 新增：使用浏览器播放开关 ----
+        # 使用浏览器播放
         card2 = ctk.CTkFrame(container, fg_color=(Config.CARD_LIGHT, Config.CARD_DARK), corner_radius=12)
         card2.pack(fill="x", padx=20, pady=10)
-
         sw_frame2 = ctk.CTkFrame(card2, fg_color="transparent")
         sw_frame2.pack(fill="x", padx=16, pady=12)
-
         ctk.CTkLabel(sw_frame2, text="使用浏览器播放", font=ctk.CTkFont(size=15),
                      text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK)).pack(side="left")
-
         self.browser_var = ctk.BooleanVar(value=self.use_browser)
         sw2 = ctk.CTkSwitch(sw_frame2, text="", variable=self.browser_var,
                            command=self.toggle_browser,
                            progress_color=Config.PRIMARY_BLUE, button_color=Config.PRIMARY_BLUE)
         sw2.pack(side="right")
-
-        ctk.CTkLabel(container, text="开启：使用默认浏览器播放视频\n关闭：使用系统默认播放器播放",
+        ctk.CTkLabel(container, text="开启：浏览器播放（配合NVIDIA支持VSR）\n关闭：使用系统播放器",
                      font=ctk.CTkFont(size=13),
                      text_color=(Config.TEXT_SECONDARY_LIGHT, Config.TEXT_SECONDARY_DARK),
                      justify="left").pack(anchor="w", padx=20, pady=(5, 10))
 
-        # ---- 导出链接和返回按钮 ----
+        # 导出和返回按钮
         export_btn = ctk.CTkButton(container, text="导出链接 (log.txt)", width=160, corner_radius=10,
                                    fg_color=Config.PRIMARY_BLUE, hover_color=Config.PRIMARY_BLUE_HOVER,
                                    command=self.export_links)
         export_btn.pack(anchor="w", padx=20, pady=(0, 10))
-
         ctk.CTkButton(container, text="返回", width=100, corner_radius=10,
                       fg_color=Config.PRIMARY_BLUE, hover_color=Config.PRIMARY_BLUE_HOVER,
                       command=partial(self.switch_page, "page1")).pack(anchor="w", padx=20, pady=20)
+
+    # ---------- 关于窗口 ----------
+    def show_about(self):
+        about = ctk.CTkToplevel(self)
+        about.title("关于")
+        about.geometry("320x80")
+        about.resizable(False, False)
+        about.transient(self)
+        about.grab_set()
+
+        about.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 320) // 2
+        y = self.winfo_y() + (self.winfo_height() - 80) // 2
+        about.geometry(f"+{x}+{y}")
+
+        # 主容器，垂直居中
+        container = ctk.CTkFrame(about, fg_color="transparent")
+        container.pack(expand=True, fill="both")
+
+        # 可点击的文字（鼠标手型）
+        link_label = ctk.CTkLabel(container, text="Power by Doubao & Deepspeek with D1r3ctor",
+                                  font=ctk.CTkFont(size=14), cursor="hand2")
+        link_label.pack(pady=(0, 10))
+        # 修改下方链接为您自己的链接
+        link_label.bind("<Button-1>", lambda e: webbrowser.open("t.me/timharrys"))
+
+        # 关闭按钮
+        ctk.CTkButton(container, text="关闭", command=about.destroy, width=80,
+                      corner_radius=8, fg_color=Config.PRIMARY_BLUE,
+                      hover_color=Config.PRIMARY_BLUE_HOVER).pack(pady=10)
 
     # ---------- 导出链接 ----------
     def export_links(self):
@@ -401,7 +423,6 @@ class GlassVideoFinder(ctk.CTk):
     def toggle_subfolder(self):
         self.scanner.scan_subfolder = self.subfolder_var.get()
 
-    # ---------- 新增：切换浏览器播放 ----------
     def toggle_browser(self):
         self.use_browser = self.browser_var.get()
 
@@ -510,13 +531,12 @@ class GlassVideoFinder(ctk.CTk):
                 sep = ctk.CTkFrame(card, fg_color=(Config.SEPARATOR_LIGHT, Config.SEPARATOR_DARK), height=1)
                 sep.pack(fill="x", padx=14)
 
-    # ---------- 打开本地文件（支持浏览器播放开关） ----------
+    # ---------- 打开本地（支持浏览器开关） ----------
     def open_local(self, path):
         if not os.path.exists(path):
             messagebox.showwarning("文件丢失", f"视频不存在：{path}")
             return
         if self.use_browser:
-            # 尝试用默认浏览器打开
             try:
                 with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r'http\shell\open\command') as key:
                     cmd = winreg.QueryValue(key, None)
@@ -526,10 +546,8 @@ class GlassVideoFinder(ctk.CTk):
                     browser_path = cmd.split()[0]
                 subprocess.Popen([browser_path, path], shell=False)
             except Exception:
-                # 失败则回退
                 os.startfile(path)
         else:
-            # 使用系统默认播放器
             os.startfile(path)
 
     def open_web(self, item):

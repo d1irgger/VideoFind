@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="#-功能特性">功能</a> •
-  <a href="#-快速开始">使用</a> •
+  <a href="#-快速开始">使用</a> 
 </p>
 
 <p align="center">

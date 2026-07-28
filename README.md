@@ -45,6 +45,8 @@
 
 ## 🚀 快速开始
 
+python -m PyInstaller --onefile --windowed --name "VideoFind" --hidden-import win32com --hidden-import win32com.client --add-data ".;." video_finder.py
+
 ### 环境要求
 - Windows 操作系统（标题读取依赖 Windows Shell API）
 - Python 3.8 及以上

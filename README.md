@@ -44,8 +44,6 @@
 ---
 
 ## 🚀 快速开始
-
-python -m PyInstaller --onefile --windowed --name "VideoFind" --hidden-import win32com --hidden-import win32com.client video_finder.py
 python -m PyInstaller --onefile --windowed --name "VideoFind" --hidden-import win32com --hidden-import win32com.client video_finder.py
 
 ### 环境要求

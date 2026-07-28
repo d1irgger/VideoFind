@@ -321,7 +321,7 @@ class GlassVideoFinder(ctk.CTk):
                      text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK)).pack(side="left")
 
         # 可点击版本号
-        version_label = ctk.CTkLabel(top_frame, text="VideoFind V6.44", font=ctk.CTkFont(size=12, family=("Microsoft YaHei", "Segoe UI", "Arial")),
+        version_label = ctk.CTkLabel(top_frame, text="VideoFind V7.28.9", font=ctk.CTkFont(size=12, family=("Microsoft YaHei", "Segoe UI", "Arial")),
                                      text_color=Config.VERSION_GRAY, cursor="hand2")
         version_label.pack(side="right")
         version_label.bind("<Button-1>", lambda e: self.show_about())

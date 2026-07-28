@@ -234,7 +234,8 @@ class GlassVideoFinder(ctk.CTk):
 
         header = ctk.CTkFrame(main, fg_color="transparent")
         header.pack(fill="x", padx=20, pady=(4, 0))
-        ctk.CTkLabel(header, text="视频检索器", font=ctk.CTkFont(size=28, weight="bold"),
+        ctk.CTkLabel(header, text="视频检索器", 
+                     font=ctk.CTkFont(size=28, weight="bold", family=("Microsoft YaHei", "SimHei")),
                      text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK)).pack(anchor="w")
 
         toolbar = ctk.CTkFrame(main, fg_color="transparent")
@@ -255,7 +256,7 @@ class GlassVideoFinder(ctk.CTk):
         self.scroll_frame.pack(fill="both", expand=True, padx=20, pady=(0, 4))
 
         self.empty_label = ctk.CTkLabel(self.scroll_frame, text="📂 点击「选择文件夹」开始扫描",
-                                        font=ctk.CTkFont(size=16),
+                                        font=ctk.CTkFont(size=16, family=("Microsoft YaHei", "SimHei")),
                                         text_color=(Config.TEXT_SECONDARY_LIGHT, Config.TEXT_SECONDARY_DARK))
         self.empty_label.pack(pady=60)
 
@@ -287,7 +288,8 @@ class GlassVideoFinder(ctk.CTk):
                                       command=self.go_prev)
         self.btn_prev.pack(side="left", padx=4)
 
-        self.page_label = ctk.CTkLabel(center, text="1 / 1", font=ctk.CTkFont(size=14),
+        self.page_label = ctk.CTkLabel(center, text="1 / 1", 
+                                       font=ctk.CTkFont(size=14, family=("Microsoft YaHei", "SimHei")),
                                        text_color=(Config.TEXT_SECONDARY_LIGHT, Config.TEXT_SECONDARY_DARK))
         self.page_label.pack(side="left", padx=16)
 
@@ -303,7 +305,7 @@ class GlassVideoFinder(ctk.CTk):
                                       command=self.go_last)
         self.btn_last.pack(side="left", padx=4)
 
-        self.load_label = ctk.CTkLabel(header, text="", font=ctk.CTkFont(size=14), text_color=Config.PRIMARY_BLUE)
+        self.load_label = ctk.CTkLabel(header, text="", font=ctk.CTkFont(size=14, family=("Microsoft YaHei", "SimHei")), text_color=Config.PRIMARY_BLUE)
         self.load_label.pack(side="right", padx=(0, 10))
 
     # ---------- 设置页面 ----------
@@ -314,11 +316,12 @@ class GlassVideoFinder(ctk.CTk):
         top_frame = ctk.CTkFrame(container, fg_color="transparent")
         top_frame.pack(fill="x", padx=20, pady=(30, 20))
 
-        ctk.CTkLabel(top_frame, text="设置", font=ctk.CTkFont(size=28, weight="bold"),
+        ctk.CTkLabel(top_frame, text="设置", 
+                     font=ctk.CTkFont(size=28, weight="bold", family=("Microsoft YaHei", "SimHei")),
                      text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK)).pack(side="left")
 
         # 可点击版本号
-        version_label = ctk.CTkLabel(top_frame, text="VideoFind V6.44", font=ctk.CTkFont(size=12),
+        version_label = ctk.CTkLabel(top_frame, text="VideoFind V7.28.9", font=ctk.CTkFont(size=12, family=("Microsoft YaHei", "SimHei")),
                                      text_color=Config.VERSION_GRAY, cursor="hand2")
         version_label.pack(side="right")
         version_label.bind("<Button-1>", lambda e: self.show_about())
@@ -328,7 +331,8 @@ class GlassVideoFinder(ctk.CTk):
         card1.pack(fill="x", padx=20, pady=10)
         sw_frame1 = ctk.CTkFrame(card1, fg_color="transparent")
         sw_frame1.pack(fill="x", padx=16, pady=12)
-        ctk.CTkLabel(sw_frame1, text="扫描子文件夹", font=ctk.CTkFont(size=15),
+        ctk.CTkLabel(sw_frame1, text="扫描子文件夹", 
+                     font=ctk.CTkFont(size=15, family=("Microsoft YaHei", "SimHei")),
                      text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK)).pack(side="left")
         self.subfolder_var = ctk.BooleanVar(value=self.scanner.scan_subfolder)
         sw1 = ctk.CTkSwitch(sw_frame1, text="", variable=self.subfolder_var,
@@ -336,7 +340,7 @@ class GlassVideoFinder(ctk.CTk):
                            progress_color=Config.PRIMARY_BLUE, button_color=Config.PRIMARY_BLUE)
         sw1.pack(side="right")
         ctk.CTkLabel(container, text="开启：扫描全部子文件夹\n关闭：仅当前文件夹",
-                     font=ctk.CTkFont(size=13),
+                     font=ctk.CTkFont(size=13, family=("Microsoft YaHei", "SimHei")),
                      text_color=(Config.TEXT_SECONDARY_LIGHT, Config.TEXT_SECONDARY_DARK),
                      justify="left").pack(anchor="w", padx=20, pady=(5, 10))
 
@@ -345,7 +349,8 @@ class GlassVideoFinder(ctk.CTk):
         card2.pack(fill="x", padx=20, pady=10)
         sw_frame2 = ctk.CTkFrame(card2, fg_color="transparent")
         sw_frame2.pack(fill="x", padx=16, pady=12)
-        ctk.CTkLabel(sw_frame2, text="使用浏览器播放", font=ctk.CTkFont(size=15),
+        ctk.CTkLabel(sw_frame2, text="使用浏览器播放", 
+                     font=ctk.CTkFont(size=15, family=("Microsoft YaHei", "SimHei")),
                      text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK)).pack(side="left")
         self.browser_var = ctk.BooleanVar(value=self.use_browser)
         sw2 = ctk.CTkSwitch(sw_frame2, text="", variable=self.browser_var,
@@ -353,7 +358,7 @@ class GlassVideoFinder(ctk.CTk):
                            progress_color=Config.PRIMARY_BLUE, button_color=Config.PRIMARY_BLUE)
         sw2.pack(side="right")
         ctk.CTkLabel(container, text="开启：浏览器播放（配合NVIDIA支持VSR）\n关闭：使用系统播放器",
-                     font=ctk.CTkFont(size=13),
+                     font=ctk.CTkFont(size=13, family=("Microsoft YaHei", "SimHei")),
                      text_color=(Config.TEXT_SECONDARY_LIGHT, Config.TEXT_SECONDARY_DARK),
                      justify="left").pack(anchor="w", padx=20, pady=(5, 10))
 
@@ -386,7 +391,7 @@ class GlassVideoFinder(ctk.CTk):
 
         # 可点击的文字（鼠标手型）
         link_label = ctk.CTkLabel(container, text="Power by Doubao & Deepspeek with D1r3ctor",
-                                  font=ctk.CTkFont(size=14), cursor="hand2")
+                                  font=ctk.CTkFont(size=14, family=("Microsoft YaHei", "SimHei")), cursor="hand2")
         link_label.pack(pady=(0, 10))
         # 修改下方链接为您自己的链接
         link_label.bind("<Button-1>", lambda e: webbrowser.open("t.me/timharrys"))
@@ -502,7 +507,8 @@ class GlassVideoFinder(ctk.CTk):
 
             top = ctk.CTkFrame(inner, fg_color="transparent")
             top.pack(fill="x")
-            ctk.CTkLabel(top, text=f"🎬 {item.name}", font=ctk.CTkFont(size=15, weight="bold"),
+            ctk.CTkLabel(top, text=f"🎬 {item.name}", 
+                         font=ctk.CTkFont(size=15, weight="bold", family=("Microsoft YaHei", "SimHei")),
                          text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK)).pack(side="left")
             btn_frame = ctk.CTkFrame(top, fg_color="transparent")
             btn_frame.pack(side="right")
@@ -516,7 +522,8 @@ class GlassVideoFinder(ctk.CTk):
             bottom = ctk.CTkFrame(inner, fg_color="transparent")
             bottom.pack(fill="x", pady=(4, 0))
             meta = f"{item.resolution} · {item.duration_str} · {item.size_str} · {item.mtime}"
-            ctk.CTkLabel(bottom, text=meta, font=ctk.CTkFont(size=12),
+            ctk.CTkLabel(bottom, text=meta, 
+                         font=ctk.CTkFont(size=12, family=("Microsoft YaHei", "SimHei")),
                          text_color=(Config.TEXT_SECONDARY_LIGHT, Config.TEXT_SECONDARY_DARK)).pack(side="left")
 
             if item.jump_url:
@@ -525,7 +532,9 @@ class GlassVideoFinder(ctk.CTk):
             else:
                 right_text = "无链接"
                 right_color = Config.VERSION_GRAY
-            ctk.CTkLabel(bottom, text=right_text, font=ctk.CTkFont(size=12), text_color=right_color).pack(side="right")
+            ctk.CTkLabel(bottom, text=right_text, 
+                         font=ctk.CTkFont(size=12, family=("Microsoft YaHei", "SimHei")),
+                         text_color=right_color).pack(side="right")
 
             if idx < len(self.filtered_items[start:end]) - 1:
                 sep = ctk.CTkFrame(card, fg_color=(Config.SEPARATOR_LIGHT, Config.SEPARATOR_DARK), height=1)

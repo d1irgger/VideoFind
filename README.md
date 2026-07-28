@@ -20,9 +20,13 @@
 </p>
 ---
 ## 📌 简介
+
 **VideoFind** 是一款专为视频爱好者设计的桌面工具，帮你**快速检索**本地视频文件，**智能提取**文件属性中的网址链接，并提供 **一键播放**、**搜索过滤**、**导出链接** 等实用功能。界面采用 iOS 风格设计，简洁高效，让你在庞大的视频库中轻松定位所需内容。
+
 ---
+
 ## ✨ 功能特性
+
 | 功能 | 说明 |
 |------|------|
 | 📁 **批量扫描** | 支持递归扫描多种视频格式（MP4, MOV, MKV, AVI, FLV, WEBM, WMV, MPG, MPEG） |
@@ -31,9 +35,12 @@
 | 🌐 **网页跳转** | 直接打开提取的链接，若无则执行google搜索 |
 | 🔍 **实时搜索** | 按文件名即时过滤，不区分大小写，单字即可匹配 |
 | 📤 **导出链接** | 将文件名与对应链接导出为 `log.txt`，更便捷视频管理 |
+
 ---
+
 ## 🚀 快速开始
 python -m PyInstaller --onefile --windowed --name "VideoFind" --hidden-import win32com --hidden-import win32com.client video_finder.py
+
 ### 环境要求
 - Windows 10 以上操作系统（标题读取依赖 Windows Shell API）
 - Python 3.8 及以上

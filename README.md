@@ -7,9 +7,6 @@
 <p align="center">
   <a href="#-功能特性">功能</a> •
   <a href="#-快速开始">使用</a> •
-  <a href="#-截图预览">截图</a> •
-  <a href="#-技术栈">技术</a> •
-  <a href="#-贡献指南">贡献</a>
 </p>
 
 <p align="center">

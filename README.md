@@ -1,5 +1,4 @@
-<img width="1149" height="884" alt="screenshots" src="https://github.com/user-attachments/assets/64384949-a398-4bd9-b36c-e02a9093463c" />
-🎬 VideoHub · 本地视频管理，如诗般优雅
+🎬 Visionary · 本地视频管理，如诗般优雅
 极简 · 强大 · 天生为探索而生
 用苹果式的直觉，管理你珍藏的每一帧记忆。
 
@@ -51,10 +50,8 @@ CSS 毛玻璃 + Flex 布局 — 纯前端美学，拒绝臃肿框架
 极客玩家 — 享受自托管的便利，随时随地通过浏览器访问
 
 📸 预览（概念图）
-markdown
-<p align="center">
-  <img src="./screenshots/screenshot.png" alt="Visionary 界面预览" width="800" />
-</p>
+<img width="1149" height="884" alt="screenshots" src="https://github.com/user-attachments/assets/85e4a743-09b3-4eb5-83df-0e345919802d" />
+
 
 实际界面比文字描述更惊艳 — 运行即见。
 
@@ -63,4 +60,3 @@ markdown
 让视频管理，成为一种享受。
 
 🌟 如果喜欢，请给一颗 Star，这是对我们最大的鼓励！
-

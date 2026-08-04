@@ -1,3 +1,4 @@
+<img width="1149" height="884" alt="screenshots" src="https://github.com/user-attachments/assets/64384949-a398-4bd9-b36c-e02a9093463c" />
 🎬 VideoHub · 本地视频管理，如诗般优雅
 极简 · 强大 · 天生为探索而生
 用苹果式的直觉，管理你珍藏的每一帧记忆。

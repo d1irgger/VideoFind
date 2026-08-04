@@ -50,7 +50,10 @@ CSS 毛玻璃 + Flex 布局 — 纯前端美学，拒绝臃肿框架
 极客玩家 — 享受自托管的便利，随时随地通过浏览器访问
 
 📸 预览（概念图）
-https://via.placeholder.com/800x450?text=Visionary+UI+Preview
+markdown
+<p align="center">
+  <img src="./screenshots/screenshot.png" alt="Visionary 界面预览" width="800" />
+</p>
 
 实际界面比文字描述更惊艳 — 运行即见。
 

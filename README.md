@@ -1,44 +1,46 @@
-<p align="center">
-  <img src="https://img.icons8.com/fluency/96/000000/video.png" alt="VideoFind Logo" width="80" height="80"/>
-  <h1 align="center">🎬 VideoFind</h1>
-  <p align="center">✨ 智能视频检索 · 一键直达 · 极速体验</p>
-</p>
+# 视频搜索
 
-<p align="center">
-  <a href="#-功能特性">功能</a> 
-  <a href="#-快速开始">使用</a> 
-</p>
+**简洁。快速。优雅。**
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.8%2B-blue?style=for-the-badge&logo=python" alt="Python">
-  <img src="https://img.shields.io/badge/Platform-Windows-blue?style=for-the-badge&logo=windows" alt="Platform">
-  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
-  <img src="https://img.shields.io/badge/UI-iOS%20Style-007aff?style=for-the-badge" alt="UI">
-</p>
----
-## 📌 简介
-
-**VideoFind** 是一款专为视频爱好者设计的桌面工具，帮你**快速检索**本地视频文件，**智能提取**文件属性中的网址链接，并提供 **一键播放**、**搜索过滤**、**导出链接** 等实用功能。界面采用 iOS 风格设计，简洁高效，让你在庞大的视频库中轻松定位所需内容。
+一个为本地视频而生的轻量检索工具。  
+以苹果设计语言重新构建，将强大功能藏于极简体验之中。
 
 ---
 
-## ✨ 功能特性
+### 设计理念
 
-| 功能 | 说明 |
-|------|------|
-| 📁 **批量扫描** | 支持递归扫描多种视频格式（MP4, MOV, MKV, AVI, FLV, WEBM, WMV, MPG, MPEG） |
-| 🔗 **智能链接提取** | 需要提前将链接输入到文件详情标题栏内 |
-| ▶️ **本地播放** | 一键用系统默认播放器或浏览器打开视频（可切换）浏览器可使用VSR |
-| 🌐 **网页跳转** | 直接打开提取的链接，若无则执行google搜索 |
-| 🔍 **实时搜索** | 按文件名即时过滤，不区分大小写，单字即可匹配 |
-| 📤 **导出链接** | 将文件名与对应链接导出为 `log.txt`，更便捷视频管理 |
+告别复杂的桌面窗口，回归浏览器本身。  
+启动即用，无需额外界面框架，一切交互都在你熟悉的网页中完成。
+
+毛玻璃质感、系统级动效、高刷新率适配，  
+每一个细节都追求「刚刚好」的流畅与克制。
 
 ---
 
-## 🚀 快速开始
-python -m PyInstaller --onefile --windowed --name "VideoFind" --hidden-import win32com --hidden-import win32com.client video_finder.py
+### 核心特性
 
-### 环境要求
-- Windows 10 以上操作系统（标题读取依赖 Windows Shell API）
-- Python 3.8 及以上
+**极速扫描**  
+多线程并行解析视频元数据，即使面对数百个文件，也能保持轻快响应。
 
+**智能分页**  
+当文件数量增多时，自动启用省略号分页，始终清晰可控。
+
+**原生质感**  
+遵循苹果设计规范：系统蓝、系统绿、精确的字重与间距、细腻的过渡动画。
+
+**一键直达**  
+自动读取 Windows 文件标题属性，提取其中的链接，或快速跳转搜索。
+
+**灵活播放**  
+支持系统默认播放器或浏览器内播放，随心切换。
+
+---
+
+### 快速开始
+
+```bash
+# 安装依赖
+pip install opencv-python pywin32
+
+# 运行
+python kkp2.py

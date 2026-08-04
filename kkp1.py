@@ -3,31 +3,25 @@ import cv2
 import webbrowser
 import math
 import re
-import threading
-import subprocess
-import winreg
+import json
+import http.server
+import socketserver
+import urllib.parse
 from datetime import datetime
-from tkinter import messagebox, filedialog
-from functools import partial
-import customtkinter as ctk
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# ---------- Windows 标题读取（原版稳定实现） ----------
-try:
-    import win32com.client
-except ImportError:
-    win32com = None
+import tkinter as tk
+from tkinter import filedialog
+import win32com.client
 
+# ========== 工具函数 ==========
 def clean_string(raw_str):
     return str(raw_str).replace('\n', '').replace('\t', '').strip()
 
 def get_windows_title(file_path):
-    """从 Windows 文件属性中读取“标题”（固定索引 21）"""
-    if os.name != "nt" or win32com is None:
+    if os.name != "nt":
         return ""
-    title_content = ""
-    shell = None
-    folder = None
-    file_item = None
+    shell = folder = file_item = None
     try:
         norm_path = os.path.normpath(file_path)
         folder_path = os.path.dirname(norm_path)
@@ -39,78 +33,48 @@ def get_windows_title(file_path):
         file_item = folder.ParseName(file_name)
         if file_item is not None:
             try:
-                title_content = clean_string(folder.GetDetailsOf(file_item, 21))
-            except:
+                return clean_string(folder.GetDetailsOf(file_item, 21))
+            except Exception:
                 pass
     except Exception:
-        return ""
+        pass
     finally:
-        if file_item:
-            try:
-                del file_item
-            except:
-                pass
-        if folder:
-            try:
-                del folder
-            except:
-                pass
-        if shell:
-            try:
-                del shell
-            except:
-                pass
-    return title_content
+        for obj in (file_item, folder, shell):
+            if obj is not None:
+                try:
+                    del obj
+                except Exception:
+                    pass
+    return ""
 
 def extract_url(text):
-    """从文本中提取 URL（支持 www. 和 .com 等）"""
     if not text:
         return None
     text = text.replace('\n', ' ').replace('\t', ' ').strip()
-    m = re.search(r'https?://[a-zA-Z0-9_\-./&?=%#]+', text)
-    if m:
-        return m.group(0)
-    m = re.search(r'(www\.[a-zA-Z0-9\-]+(?:\.[a-zA-Z0-9\-]+)*\.[a-zA-Z]{2,})', text)
-    if m:
-        return "https://" + m.group(0)
-    m = re.search(r'([a-zA-Z0-9\-]+\.[a-zA-Z]{2,})', text)
-    if m:
-        return "https://" + m.group(0)
-    if "http" in text:
-        start = text.find("http")
-        return text[start:].split()[0]
-    return None
+    m = re.search(r'https?://\S+', text)
+    return m.group(0) if m else None
 
-# ==================== 自然排序（数字从小到大） ====================
 def natural_key(text):
     return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', text)]
 
-# ==================== 配置 ====================
+def format_size(size_bytes):
+    if size_bytes <= 0:
+        return "0 B"
+    units = ("B", "KB", "MB", "GB", "TB")
+    idx = min(int(math.log(size_bytes, 1024)), len(units) - 1)
+    return f"{size_bytes / (1024 ** idx):.2f} {units[idx]}"
+
+def format_duration(seconds):
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+# ========== 配置与数据类 ==========
 class Config:
-    WINDOW_WIDTH = 1100
-    WINDOW_HEIGHT = 780
-    MIN_WIDTH = 900
-    MIN_HEIGHT = 650
     VIDEO_EXT = (".mp4", ".mov", ".mkv", ".avi", ".flv", ".webm", ".wmv", ".mpg", ".mpeg")
-    PAGE_SIZE = 7
-    SEARCH_URL_TPL = "https://www.baidu.com/s?wd={filename}"
+    PARSE_WORKERS = min(8, (os.cpu_count() or 4) + 2)
 
-    BG_LIGHT = "#f2f2f7"
-    BG_DARK = "#1c1c1e"
-    CARD_LIGHT = "#ffffff"
-    CARD_DARK = "#2c2c2e"
-    SEPARATOR_LIGHT = "#e5e5ea"
-    SEPARATOR_DARK = "#3a3a3c"
-    PRIMARY_BLUE = "#007aff"
-    PRIMARY_BLUE_HOVER = "#0055cc"
-    TEXT_PRIMARY_LIGHT = "#1c1c1e"
-    TEXT_PRIMARY_DARK = "#ffffff"
-    TEXT_SECONDARY_LIGHT = "#3a3a3c"
-    TEXT_SECONDARY_DARK = "#8e8e93"
-    LINK_COLOR = "#007aff"
-    VERSION_GRAY = "#8e8e93"
-
-# ==================== 数据模型 ====================
 class VideoItem:
     __slots__ = ("name", "path", "resolution", "duration_str", "size_str", "mtime", "title", "jump_url")
     def __init__(self, name, path, resolution, duration_str, size_str, mtime, title, jump_url):
@@ -123,55 +87,53 @@ class VideoItem:
         self.title = title
         self.jump_url = jump_url
 
+# ========== 视频解析 ==========
 class VideoParser:
     @staticmethod
-    def get_windows_title(file_path):
-        return get_windows_title(file_path)
-
-    @staticmethod
-    def extract_url(text):
-        return extract_url(text)
-
-    @classmethod
-    def parse_video(cls, file_path):
+    def parse_video(file_path):
+        width = height = 0
+        duration = 0.0
         try:
             cap = cv2.VideoCapture(file_path)
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            fps = cap.get(cv2.CAP_PROP_FPS)
-            total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-            duration = total_frames / fps if fps > 0 else 0
+            if cap.isOpened():
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+                fps = cap.get(cv2.CAP_PROP_FPS) or 0
+                total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+                if fps > 0 and total_frames > 0:
+                    duration = total_frames / fps
             cap.release()
-        except:
-            width = height = 0
-            duration = 0
+        except Exception:
+            pass
 
-        h = int(duration // 3600)
-        m = int((duration % 3600) // 60)
-        s = int(duration % 60)
-        duration_str = f"{h:02d}:{m:02d}:{s:02d}"
+        size_bytes = 0
+        try:
+            size_bytes = os.path.getsize(file_path)
+        except Exception:
+            pass
 
-        size_bytes = os.path.getsize(file_path)
-        units = ["B", "KB", "MB", "GB"]
-        idx = int(math.log(size_bytes, 1024)) if size_bytes > 0 else 0
-        size_str = f"{size_bytes / (1024 ** idx):.2f} {units[idx]}"
+        mtime = ""
+        try:
+            mtime = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
 
-        mtime = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime("%Y-%m-%d %H:%M")
-        title = cls.get_windows_title(file_path)
-        jump_url = cls.extract_url(title)
-        resolution = f"{width}×{height}" if width else "未知分辨率"
+        title = get_windows_title(file_path)
+        jump_url = extract_url(title)
+        resolution = f"{width}×{height}" if width and height else "分辨率未知"
 
         return VideoItem(
             name=os.path.basename(file_path),
             path=file_path,
             resolution=resolution,
-            duration_str=duration_str,
-            size_str=size_str,
+            duration_str=format_duration(duration),
+            size_str=format_size(size_bytes),
             mtime=mtime,
             title=title,
             jump_url=jump_url
         )
 
+# ========== 扫描器 ==========
 class VideoScanner:
     def __init__(self, scan_subfolder=True):
         self.scan_subfolder = scan_subfolder
@@ -184,415 +146,639 @@ class VideoScanner:
                     if f.lower().endswith(Config.VIDEO_EXT):
                         result.append(os.path.join(dirpath, f))
         else:
-            for f in os.listdir(root_dir):
-                fp = os.path.join(root_dir, f)
-                if os.path.isfile(fp) and f.lower().endswith(Config.VIDEO_EXT):
-                    result.append(fp)
+            try:
+                for f in os.listdir(root_dir):
+                    fp = os.path.join(root_dir, f)
+                    if os.path.isfile(fp) and f.lower().endswith(Config.VIDEO_EXT):
+                        result.append(fp)
+            except Exception:
+                pass
         return result
 
-# ==================== 主窗口 ====================
-class GlassVideoFinder(ctk.CTk):
-    def __init__(self):
-        super().__init__()
-        self.title("视频检索器")
-        self.geometry(f"{Config.WINDOW_WIDTH}x{Config.WINDOW_HEIGHT}")
-        self.minsize(Config.MIN_WIDTH, Config.MIN_HEIGHT)
-        self.center_window()
+# ========== 全局状态 ==========
+scanner = VideoScanner(scan_subfolder=True)
+use_browser = False
+video_items = []
+filtered_items = []
+current_folder = ""
 
-        self.video_items = []
-        self.filtered_items = []
-        self.current_page = 1
-        self.total_pages = 1
-        self.loading = False
-        self.scanner = VideoScanner(scan_subfolder=True)
+# ========== 多线程 HTTP 服务 ==========
+class ThreadingHTTPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
 
-        # 浏览器播放开关状态，默认 False（使用默认播放器）
-        self.use_browser = False
+class MyHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass
 
-        self.build_ui()
-        self.switch_page("page1")
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        query = urllib.parse.parse_qs(parsed.query)
 
-    def center_window(self):
-        self.update_idletasks()
-        x = (self.winfo_screenwidth() - Config.WINDOW_WIDTH) // 2
-        y = (self.winfo_screenheight() - Config.WINDOW_HEIGHT) // 2
-        self.geometry(f"+{x}+{y}")
+        if path == "/":
+            self.send_html(self._index_html())
+        elif path == "/api/files":
+            self._api_files(query)
+        elif path == "/api/play":
+            self._api_play(query)
+        elif path == "/api/export":
+            self._api_export()
+        elif path == "/api/config":
+            self._api_config(query)
+        elif path == "/api/select_folder":
+            self._api_select_folder()
+        else:
+            self.send_error(404)
 
-    def build_ui(self):
-        self.root_container = ctk.CTkFrame(self, fg_color="transparent")
-        self.root_container.pack(fill="both", expand=True)
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/api/scan":
+            content_len = int(self.headers.get("Content-Length", 0))
+            post_data = self.rfile.read(content_len)
+            try:
+                data = json.loads(post_data.decode("utf-8"))
+                folder = data.get("folder", "").strip()
+            except Exception:
+                folder = ""
+            self._api_scan(folder)
+        else:
+            self.send_error(404)
 
-        self.page1 = ctk.CTkFrame(self.root_container, fg_color="transparent")
-        self.page2 = ctk.CTkFrame(self.root_container, fg_color="transparent")
-        self.build_page1()
-        self.build_page2()
+    def send_json(self, data):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
 
-    # ---------- 首页 ----------
-    def build_page1(self):
-        main = ctk.CTkFrame(self.page1, fg_color=(Config.BG_LIGHT, Config.BG_DARK), corner_radius=0)
-        main.pack(fill="both", expand=True)
+    def send_html(self, content):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(content.encode("utf-8"))
 
-        header = ctk.CTkFrame(main, fg_color="transparent")
-        header.pack(fill="x", padx=20, pady=(4, 0))
-        ctk.CTkLabel(header, text="视频检索器", 
-                     font=ctk.CTkFont(size=28, weight="bold", family=("Microsoft YaHei", "Segoe UI", "Arial")),
-                     text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK)).pack(anchor="w")
-
-        toolbar = ctk.CTkFrame(main, fg_color="transparent")
-        toolbar.pack(fill="x", padx=20, pady=(0, 2))
-        self.btn_select = ctk.CTkButton(toolbar, text="选择文件夹", width=120, corner_radius=10,
-                                        fg_color=Config.PRIMARY_BLUE, hover_color=Config.PRIMARY_BLUE_HOVER,
-                                        command=self.select_folder)
-        self.btn_select.pack(side="left")
-        self.search_entry = ctk.CTkEntry(toolbar, placeholder_text="搜索文件名", width=180,
-                                         corner_radius=10, border_width=0,
-                                         fg_color=(Config.CARD_LIGHT, Config.CARD_DARK))
-        self.search_entry.pack(side="right")
-        self.search_entry.bind('<KeyRelease>', self.on_search)
-
-        self.scroll_frame = ctk.CTkScrollableFrame(main, fg_color="transparent",
-                                                   scrollbar_button_color=(Config.SEPARATOR_LIGHT, Config.SEPARATOR_DARK),
-                                                   scrollbar_button_hover_color=(Config.PRIMARY_BLUE, Config.PRIMARY_BLUE))
-        self.scroll_frame.pack(fill="both", expand=True, padx=20, pady=(0, 4))
-
-        self.empty_label = ctk.CTkLabel(self.scroll_frame, text="📂 点击「选择文件夹」开始扫描",
-                                        font=ctk.CTkFont(size=16, family=("Microsoft YaHei", "Segoe UI", "Arial")),
-                                        text_color=(Config.TEXT_SECONDARY_LIGHT, Config.TEXT_SECONDARY_DARK))
-        self.empty_label.pack(pady=60)
-
-        # 底部导航栏
-        nav = ctk.CTkFrame(main, fg_color="transparent")
-        nav.pack(fill="x", padx=20, pady=(8, 14))
-
-        self.btn_settings = ctk.CTkButton(nav, text="设置", width=80, height=34, corner_radius=8,
-                                          fg_color="transparent", text_color=(Config.PRIMARY_BLUE, Config.PRIMARY_BLUE),
-                                          hover_color=(Config.SEPARATOR_LIGHT, Config.SEPARATOR_DARK),
-                                          command=partial(self.switch_page, "page2"))
-        self.btn_settings.pack(side="left", padx=(0, 10), anchor="n")
-
-        spacer_right = ctk.CTkFrame(nav, fg_color="transparent", width=80, height=34)
-        spacer_right.pack(side="right", padx=(10, 0), anchor="n")
-
-        center = ctk.CTkFrame(nav, fg_color="transparent")
-        center.pack(expand=True, anchor="n")
-
-        self.btn_home = ctk.CTkButton(center, text="⏮", width=48, height=34, corner_radius=8,
-                                      fg_color="transparent", text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK),
-                                      hover_color=(Config.SEPARATOR_LIGHT, Config.SEPARATOR_DARK),
-                                      command=self.go_home)
-        self.btn_home.pack(side="left", padx=4)
-
-        self.btn_prev = ctk.CTkButton(center, text="◀", width=48, height=34, corner_radius=8,
-                                      fg_color="transparent", text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK),
-                                      hover_color=(Config.SEPARATOR_LIGHT, Config.SEPARATOR_DARK),
-                                      command=self.go_prev)
-        self.btn_prev.pack(side="left", padx=4)
-
-        self.page_label = ctk.CTkLabel(center, text="1 / 1", 
-                                       font=ctk.CTkFont(size=14, family=("Microsoft YaHei", "Segoe UI", "Arial")),
-                                       text_color=(Config.TEXT_SECONDARY_LIGHT, Config.TEXT_SECONDARY_DARK))
-        self.page_label.pack(side="left", padx=16)
-
-        self.btn_next = ctk.CTkButton(center, text="▶", width=48, height=34, corner_radius=8,
-                                      fg_color="transparent", text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK),
-                                      hover_color=(Config.SEPARATOR_LIGHT, Config.SEPARATOR_DARK),
-                                      command=self.go_next)
-        self.btn_next.pack(side="left", padx=4)
-
-        self.btn_last = ctk.CTkButton(center, text="⏭", width=48, height=34, corner_radius=8,
-                                      fg_color="transparent", text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK),
-                                      hover_color=(Config.SEPARATOR_LIGHT, Config.SEPARATOR_DARK),
-                                      command=self.go_last)
-        self.btn_last.pack(side="left", padx=4)
-
-        self.load_label = ctk.CTkLabel(header, text="", font=ctk.CTkFont(size=14, family=("Microsoft YaHei", "Segoe UI", "Arial")), text_color=Config.PRIMARY_BLUE)
-        self.load_label.pack(side="right", padx=(0, 10))
-
-    # ---------- 设置页面 ----------
-    def build_page2(self):
-        container = ctk.CTkFrame(self.page2, fg_color=(Config.BG_LIGHT, Config.BG_DARK), corner_radius=0)
-        container.pack(fill="both", expand=True)
-
-        top_frame = ctk.CTkFrame(container, fg_color="transparent")
-        top_frame.pack(fill="x", padx=20, pady=(30, 20))
-
-        ctk.CTkLabel(top_frame, text="设置", 
-                     font=ctk.CTkFont(size=28, weight="bold", family=("Microsoft YaHei", "Segoe UI", "Arial")),
-                     text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK)).pack(side="left")
-
-        # 可点击版本号
-        version_label = ctk.CTkLabel(top_frame, text="VideoFind V7.28.9", font=ctk.CTkFont(size=12, family=("Microsoft YaHei", "Segoe UI", "Arial")),
-                                     text_color=Config.VERSION_GRAY, cursor="hand2")
-        version_label.pack(side="right")
-        version_label.bind("<Button-1>", lambda e: self.show_about())
-
-        # 扫描子文件夹
-        card1 = ctk.CTkFrame(container, fg_color=(Config.CARD_LIGHT, Config.CARD_DARK), corner_radius=12)
-        card1.pack(fill="x", padx=20, pady=10)
-        sw_frame1 = ctk.CTkFrame(card1, fg_color="transparent")
-        sw_frame1.pack(fill="x", padx=16, pady=12)
-        ctk.CTkLabel(sw_frame1, text="扫描子文件夹", 
-                     font=ctk.CTkFont(size=15, family=("Microsoft YaHei", "Segoe UI", "Arial")),
-                     text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK)).pack(side="left")
-        self.subfolder_var = ctk.BooleanVar(value=self.scanner.scan_subfolder)
-        sw1 = ctk.CTkSwitch(sw_frame1, text="", variable=self.subfolder_var,
-                           command=self.toggle_subfolder,
-                           progress_color=Config.PRIMARY_BLUE, button_color=Config.PRIMARY_BLUE)
-        sw1.pack(side="right")
-        ctk.CTkLabel(container, text="开启：扫描全部子文件夹\n关闭：仅当前文件夹",
-                     font=ctk.CTkFont(size=13, family=("Microsoft YaHei", "Segoe UI", "Arial")),
-                     text_color=(Config.TEXT_SECONDARY_LIGHT, Config.TEXT_SECONDARY_DARK),
-                     justify="left").pack(anchor="w", padx=20, pady=(5, 10))
-
-        # 使用浏览器播放
-        card2 = ctk.CTkFrame(container, fg_color=(Config.CARD_LIGHT, Config.CARD_DARK), corner_radius=12)
-        card2.pack(fill="x", padx=20, pady=10)
-        sw_frame2 = ctk.CTkFrame(card2, fg_color="transparent")
-        sw_frame2.pack(fill="x", padx=16, pady=12)
-        ctk.CTkLabel(sw_frame2, text="使用浏览器播放", 
-                     font=ctk.CTkFont(size=15, family=("Microsoft YaHei", "Segoe UI", "Arial")),
-                     text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK)).pack(side="left")
-        self.browser_var = ctk.BooleanVar(value=self.use_browser)
-        sw2 = ctk.CTkSwitch(sw_frame2, text="", variable=self.browser_var,
-                           command=self.toggle_browser,
-                           progress_color=Config.PRIMARY_BLUE, button_color=Config.PRIMARY_BLUE)
-        sw2.pack(side="right")
-        ctk.CTkLabel(container, text="开启：浏览器播放（配合NVIDIA支持VSR）\n关闭：使用系统播放器",
-                     font=ctk.CTkFont(size=13, family=("Microsoft YaHei", "Segoe UI", "Arial")),
-                     text_color=(Config.TEXT_SECONDARY_LIGHT, Config.TEXT_SECONDARY_DARK),
-                     justify="left").pack(anchor="w", padx=20, pady=(5, 10))
-
-        # 导出和返回按钮
-        export_btn = ctk.CTkButton(container, text="导出链接 (log.txt)", width=160, corner_radius=10,
-                                   fg_color=Config.PRIMARY_BLUE, hover_color=Config.PRIMARY_BLUE_HOVER,
-                                   command=self.export_links)
-        export_btn.pack(anchor="w", padx=20, pady=(0, 10))
-        ctk.CTkButton(container, text="返回", width=100, corner_radius=10,
-                      fg_color=Config.PRIMARY_BLUE, hover_color=Config.PRIMARY_BLUE_HOVER,
-                      command=partial(self.switch_page, "page1")).pack(anchor="w", padx=20, pady=20)
-
-    # ---------- 关于窗口 ----------
-    def show_about(self):
-        about = ctk.CTkToplevel(self)
-        about.title("关于")
-        about.geometry("320x80")
-        about.resizable(False, False)
-        about.transient(self)
-        about.grab_set()
-
-        about.update_idletasks()
-        x = self.winfo_x() + (self.winfo_width() - 320) // 2
-        y = self.winfo_y() + (self.winfo_height() - 80) // 2
-        about.geometry(f"+{x}+{y}")
-
-        # 主容器，垂直居中
-        container = ctk.CTkFrame(about, fg_color="transparent")
-        container.pack(expand=True, fill="both")
-
-        # 可点击的文字（鼠标手型）
-        link_label = ctk.CTkLabel(container, text="Power by Doubao & Deepspeek with D1r3ctor",
-                                  font=ctk.CTkFont(size=14, family=("Microsoft YaHei", "Segoe UI", "Arial")), cursor="hand2")
-        link_label.pack(pady=(0, 10))
-        # 修改下方链接为您自己的链接
-        link_label.bind("<Button-1>", lambda e: webbrowser.open("t.me/timharrys"))
-
-        # 关闭按钮
-        ctk.CTkButton(container, text="关闭", command=about.destroy, width=80,
-                      corner_radius=8, fg_color=Config.PRIMARY_BLUE,
-                      hover_color=Config.PRIMARY_BLUE_HOVER).pack(pady=10)
-
-    # ---------- 导出链接 ----------
-    def export_links(self):
-        if not self.video_items:
-            messagebox.showinfo("提示", "请先扫描视频文件夹")
-            return
-        file_path = os.path.join(os.getcwd(), "log.txt")
+    def send_file(self, filepath, content_type="application/octet-stream", disposition="attachment"):
         try:
-            with open(file_path, 'w', encoding='utf-8') as f:
-                for item in self.video_items:
+            with open(filepath, "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            filename = os.path.basename(filepath)
+            encoded_filename = urllib.parse.quote(filename, safe="")
+            ascii_filename = filename.encode("ascii", "ignore").decode("ascii") or "download"
+            self.send_header(
+                "Content-Disposition",
+                f"{disposition}; filename*=UTF-8''{encoded_filename}; filename=\"{ascii_filename}\""
+            )
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception as e:
+            self.send_error(500, str(e))
+
+    def _api_select_folder(self):
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            folder_selected = filedialog.askdirectory(title="选择视频文件夹")
+            root.destroy()
+            self.send_json({"folder": folder_selected or ""})
+        except Exception as e:
+            self.send_json({"error": str(e)})
+
+    def _api_scan(self, folder):
+        global video_items, filtered_items, current_folder
+        if not folder or not os.path.isdir(folder):
+            self.send_json({"error": "无效的文件夹路径"})
+            return
+
+        current_folder = folder
+        try:
+            paths = scanner.scan(folder)
+            items = []
+
+            with ThreadPoolExecutor(max_workers=Config.PARSE_WORKERS) as executor:
+                future_to_path = {executor.submit(VideoParser.parse_video, p): p for p in paths}
+                for future in as_completed(future_to_path):
+                    try:
+                        items.append(future.result())
+                    except Exception as e:
+                        print(f"解析失败 {future_to_path[future]}: {e}")
+
+            items.sort(key=lambda x: natural_key(x.name))
+            video_items = items
+            filtered_items = items.copy()
+            self.send_json({"success": True, "count": len(items)})
+        except Exception as e:
+            self.send_json({"error": f"扫描出错: {str(e)}"})
+
+    def _api_files(self, query):
+        global filtered_items
+        try:
+            page = int(query.get("page", ["1"])[0])
+            per_page = int(query.get("per_page", ["7"])[0])
+        except Exception:
+            page, per_page = 1, 7
+
+        keyword = query.get("keyword", [""])[0].strip()
+        if keyword:
+            kw_lower = keyword.lower()
+            items = [item for item in video_items if kw_lower in item.name.lower()]
+        else:
+            items = video_items
+
+        filtered_items = items
+        total = len(items)
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        page = max(1, min(page, total_pages))
+        start = (page - 1) * per_page
+        end = min(start + per_page, total)
+        page_items = items[start:end]
+
+        data = [{
+            "name": it.name,
+            "path": it.path,
+            "resolution": it.resolution,
+            "duration": it.duration_str,
+            "size": it.size_str,
+            "mtime": it.mtime,
+            "title": it.title or "未命名",
+            "jump_url": it.jump_url or "",
+        } for it in page_items]
+
+        self.send_json({
+            "total": total,
+            "page": page,
+            "total_pages": total_pages,
+            "items": data
+        })
+
+    def _api_play(self, query):
+        path = query.get("path", [""])[0]
+        if not path or not os.path.exists(path):
+            self.send_error(404, "文件不存在")
+            return
+        mode = query.get("mode", ["play"])[0]
+
+        if mode == "stream":
+            ext = os.path.splitext(path)[1].lower()
+            if ext in (".mp4", ".webm", ".ogg"):
+                content_type = f"video/{ext[1:]}"
+            else:
+                content_type = "application/octet-stream"
+            self.send_file(path, content_type=content_type, disposition="inline")
+            return
+
+        if use_browser:
+            self.send_html(self._player_html(path))
+        else:
+            try:
+                webbrowser.open(path)
+            except Exception as e:
+                self.send_error(500, f"无法启动浏览器: {str(e)}")
+                return
+            self.send_html("""<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>正在启动</title></head>
+<body style="background:#1c1c1e;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:-apple-system,BlinkMacSystemFont,sans-serif;">
+    <div style="text-align:center;">
+        <h2 style="font-weight:500;">正在使用浏览器打开…</h2>
+        <p style="opacity:0.6;font-size:14px;">浏览器启动后此窗口将自动关闭</p>
+        <script>setTimeout(function(){window.close();},1500);</script>
+    </div>
+</body>
+</html>""")
+
+    def _api_export(self):
+        if not video_items:
+            self.send_json({"error": "请先扫描视频文件夹"})
+            return
+        log_path = os.path.join(os.getcwd(), "log.txt")
+        try:
+            with open(log_path, "w", encoding="utf-8") as f:
+                for item in video_items:
                     link = item.jump_url if item.jump_url else "无链接"
                     f.write(f"{item.name}\t{link}\n")
-            webbrowser.open(file_path)
-            messagebox.showinfo("导出成功", f"已导出 {len(self.video_items)} 条记录到 {file_path}\n浏览器将打开该文件。")
+            self.send_file(log_path, content_type="text/plain")
         except Exception as e:
-            messagebox.showerror("导出失败", str(e))
+            self.send_json({"error": str(e)})
 
-    def switch_page(self, page):
-        self.page1.pack_forget()
-        self.page2.pack_forget()
-        if page == "page1":
-            self.page1.pack(fill="both", expand=True)
-        else:
-            self.page2.pack(fill="both", expand=True)
+    def _api_config(self, query):
+        global use_browser, scanner
+        if "use_browser" in query:
+            use_browser = query["use_browser"][0].lower() == "true"
+        if "scan_subfolder" in query:
+            scanner.scan_subfolder = query["scan_subfolder"][0].lower() == "true"
+        self.send_json({
+            "use_browser": use_browser,
+            "scan_subfolder": scanner.scan_subfolder
+        })
 
-    def toggle_subfolder(self):
-        self.scanner.scan_subfolder = self.subfolder_var.get()
+    def _player_html(self, file_path):
+        safe_path = urllib.parse.quote(file_path, safe="")
+        return f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>播放器 - {os.path.basename(file_path)}</title>
+    <style>
+        body {{ background: #1c1c1e; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Arial, sans-serif; }}
+        .container {{ background: rgba(255,255,255,0.08); backdrop-filter: blur(20px); border-radius: 24px; padding: 28px; box-shadow: 0 20px 60px rgba(0,0,0,0.55); max-width: 90vw; max-height: 90vh; text-align: center; }}
+        video {{ width: 100%; max-height: 70vh; border-radius: 14px; background: #000; }}
+        .info {{ color: #f5f5f7; margin-top: 14px; font-size: 15px; opacity: 0.85; font-weight: 500; }}
+        .download-link {{ display: inline-block; margin-top: 12px; color: #0a84ff; text-decoration: none; font-weight: 500; padding: 8px 18px; border-radius: 20px; background: rgba(255,255,255,0.1); transition: background 0.2s cubic-bezier(0.25, 0.1, 0.25, 1); }}
+        .download-link:hover {{ background: rgba(255,255,255,0.18); }}
+        .error-msg {{ color: #ff6961; margin-top: 18px; font-size: 14px; }}
+    </style>
+</head>
+<body>
+<div class="container">
+    <video controls autoplay>
+        <source src="/api/play?path={safe_path}&mode=stream" type="video/mp4">
+        <source src="/api/play?path={safe_path}&mode=stream" type="video/webm">
+        <source src="/api/play?path={safe_path}&mode=stream" type="video/ogg">
+        <div class="error-msg">
+            当前浏览器不支持此视频格式，或文件无法解码。<br>
+            请尝试 <a href="/api/play?path={safe_path}" download style="color:#0a84ff;">下载</a> 后本地播放。
+        </div>
+    </video>
+    <div class="info">{os.path.basename(file_path)}</div>
+    <a href="/api/play?path={safe_path}" download class="download-link">下载文件</a>
+    <a href="/" style="color: #98989d; margin-left: 16px; text-decoration: none; font-size: 14px;">返回</a>
+</div>
+</body>
+</html>"""
 
-    def toggle_browser(self):
-        self.use_browser = self.browser_var.get()
+    def _index_html(self):
+        return """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视频搜索</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; overflow: hidden; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(160deg, #e8ecf1 0%, #f2f4f7 45%, #eef1f5 100%);
+            display: flex; justify-content: center; align-items: center; padding: 18px;
+            -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+        }
+        .glass {
+            background: rgba(255,255,255,0.68);
+            backdrop-filter: blur(32px) saturate(180%);
+            -webkit-backdrop-filter: blur(32px) saturate(180%);
+            border-radius: 26px;
+            box-shadow: 0 18px 50px rgba(0,0,0,0.07), 0 4px 14px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,0.85);
+            border: 1px solid rgba(255,255,255,0.55);
+            width: 100%; max-width: 1120px; height: 100%; max-height: 860px;
+            padding: 22px 30px 18px; display: flex; flex-direction: column; overflow: hidden;
+        }
+        .header { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; margin-bottom: 12px; flex-wrap: wrap; }
+        .header h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.4px; color: #1d1d1f; margin: 0; }
+        .header .version { font-size: 12.5px; color: #8e8e93; font-weight: 500; letter-spacing: 0.15px; }
+        .toolbar { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; flex-shrink: 0; margin-bottom: 12px; }
+        .toolbar input, .toolbar button {
+            font-family: inherit; font-size: 14px; border: none; outline: none; border-radius: 11px; padding: 8px 15px;
+            background: rgba(255,255,255,0.78); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+            transition: transform 0.18s cubic-bezier(0.25, 0.1, 0.25, 1), background 0.18s cubic-bezier(0.25, 0.1, 0.25, 1), box-shadow 0.18s cubic-bezier(0.25, 0.1, 0.25, 1), border-color 0.18s cubic-bezier(0.25, 0.1, 0.25, 1);
+        }
+        .toolbar input { flex: 1 1 170px; min-width: 120px; border: 1px solid rgba(0,0,0,0.04); font-weight: 400; color: #1d1d1f; }
+        .toolbar input::placeholder { color: #8e8e93; }
+        .toolbar input:focus { background: rgba(255,255,255,0.96); border-color: #007aff; box-shadow: 0 0 0 3.5px rgba(0,122,255,0.15); }
+        .toolbar button { background: #007aff; color: #ffffff; font-weight: 520; padding: 8px 16px; cursor: pointer; box-shadow: 0 2px 10px rgba(0,122,255,0.22); border: 1px solid rgba(255,255,255,0.2); letter-spacing: 0.1px; }
+        .toolbar button:hover { background: #0071e3; transform: translateY(-0.5px); box-shadow: 0 4px 14px rgba(0,122,255,0.28); }
+        .toolbar button:active { transform: scale(0.97); box-shadow: 0 1px 6px rgba(0,122,255,0.2); }
+        .toolbar button.secondary { background: rgba(255,255,255,0.72); color: #1d1d1f; box-shadow: 0 1px 4px rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.05); }
+        .toolbar button.secondary:hover { background: rgba(255,255,255,0.92); box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+        .toolbar .switch-group { display: flex; gap: 18px; align-items: center; margin-left: auto; font-size: 13px; color: #1d1d1f; }
+        .switch-group label { display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; }
+        .switch-group label .switch-label { font-size: 13px; font-weight: 450; color: #1d1d1f; letter-spacing: -0.1px; }
+        .switch-group .toggle { position: relative; width: 42px; height: 25px; flex-shrink: 0; background: #e5e5ea; border-radius: 12.5px; transition: background 0.28s cubic-bezier(0.25, 0.1, 0.25, 1); box-shadow: inset 0 1px 2px rgba(0,0,0,0.1); }
+        .switch-group .toggle.active { background: #34c759; }
+        .switch-group .toggle .knob { position: absolute; top: 2px; left: 2px; width: 21px; height: 21px; background: #ffffff; border-radius: 50%; box-shadow: 0 1px 4px rgba(0,0,0,0.16), 0 1px 1px rgba(0,0,0,0.08); transition: transform 0.28s cubic-bezier(0.34, 1.45, 0.64, 1); }
+        .switch-group .toggle.active .knob { transform: translateX(17px); }
+        .switch-group input[type="checkbox"] { display: none; }
+        .list-container { flex: 1; display: flex; flex-direction: column; gap: 6px; min-height: 0; margin-top: 2px; justify-content: flex-start; }
+        .file-item {
+            background: rgba(255,255,255,0.58); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+            border-radius: 13px; padding: 8px 15px; border: 1px solid rgba(255,255,255,0.4); box-shadow: 0 1px 6px rgba(0,0,0,0.02);
+            transition: transform 0.2s cubic-bezier(0.25, 0.1, 0.25, 1), background 0.2s cubic-bezier(0.25, 0.1, 0.25, 1), box-shadow 0.2s cubic-bezier(0.25, 0.1, 0.25, 1);
+            display: flex; flex-direction: column; justify-content: center; flex: 0 0 auto; will-change: transform;
+        }
+        .file-item:hover { background: rgba(255,255,255,0.82); box-shadow: 0 4px 14px rgba(0,0,0,0.045); transform: translateY(-1px); }
+        .file-item .top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 5px; }
+        .file-item .top .name { font-size: 14.5px; font-weight: 520; color: #1d1d1f; word-break: break-word; letter-spacing: -0.2px; }
+        .file-item .top .actions { display: flex; gap: 6px; }
+        .file-item .top .actions button {
+            padding: 4px 12px; font-size: 12px; border-radius: 16px; border: none; background: #007aff; color: #ffffff; cursor: pointer;
+            transition: transform 0.16s cubic-bezier(0.25, 0.1, 0.25, 1), background 0.16s cubic-bezier(0.25, 0.1, 0.25, 1);
+            font-weight: 510; letter-spacing: 0.05px;
+        }
+        .file-item .top .actions button:hover { background: #0071e3; transform: scale(1.03); }
+        .file-item .top .actions button:active { transform: scale(0.97); }
+        .file-item .top .actions button.web { background: #34c759; }
+        .file-item .top .actions button.web:hover { background: #30b753; }
+        .file-item .meta { margin-top: 2px; display: flex; flex-wrap: wrap; gap: 7px 14px; font-size: 11.5px; color: #6e6e73; letter-spacing: -0.1px; }
+        .file-item .meta .title { color: #1d1d1f; opacity: 0.75; }
+        .pagination-wrapper {
+            display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; margin-top: 14px; padding-top: 12px;
+            border-top: 1px solid rgba(0,0,0,0.045); flex-wrap: wrap; gap: 8px; min-height: 48px;
+        }
+        .pagination-wrapper .left { font-size: 12.5px; color: #8e8e93; flex: 0 0 auto; font-weight: 450; }
+        .pagination-wrapper .center { flex: 1 1 auto; display: flex; justify-content: center; }
+        .pagination-wrapper .right { font-size: 12px; color: #8e8e93; flex: 0 0 auto; }
+        .pagination-wrapper .right a { color: #007aff; text-decoration: none; font-weight: 500; transition: opacity 0.18s cubic-bezier(0.25, 0.1, 0.25, 1); }
+        .pagination-wrapper .right a:hover { opacity: 0.75; }
+        .pagination { display: flex; justify-content: center; align-items: center; gap: 5px; flex-wrap: wrap; }
+        .pagination button {
+            font-family: inherit; cursor: pointer; user-select: none;
+            transition: transform 0.16s cubic-bezier(0.25, 0.1, 0.25, 1), background 0.16s cubic-bezier(0.25, 0.1, 0.25, 1), box-shadow 0.16s cubic-bezier(0.25, 0.1, 0.25, 1), border-color 0.16s cubic-bezier(0.25, 0.1, 0.25, 1);
+            will-change: transform;
+        }
+        .pagination button:disabled { opacity: 0.36; cursor: default; }
+        .pagination button:hover:not(:disabled) { transform: translateY(-0.5px); }
+        .pagination button:active:not(:disabled) { transform: scale(0.96); }
+        .empty { text-align: center; color: #8e8e93; font-size: 15.5px; margin: auto; font-weight: 450; }
+        .empty.scanning { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 20px; }
+        .spinner { width: 36px; height: 36px; border: 2.8px solid rgba(0,0,0,0.07); border-top-color: #007aff; border-radius: 50%; animation: spin 0.7s linear infinite; margin: 0 auto; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (max-width: 700px) {
+            .glass { padding: 15px; border-radius: 20px; }
+            .header h1 { font-size: 21px; }
+            .toolbar { flex-direction: column; align-items: stretch; gap: 8px; }
+            .toolbar .switch-group { margin-left: 0; justify-content: flex-start; flex-wrap: wrap; gap: 12px; }
+            .pagination-wrapper { flex-direction: column; align-items: center; gap: 7px; }
+        }
+    </style>
+</head>
+<body>
+<div class="glass" id="app">
+    <div class="header">
+        <h1>视频搜索</h1>
+        <span class="version">版本 8.4.G</span>
+    </div>
+    <div class="toolbar">
+        <button id="scanBtn">浏览</button>
+        <input type="text" id="searchInput" placeholder="搜索视频" />
+        <button class="secondary" id="exportBtn">导出链接</button>
+        <div class="switch-group">
+            <label>
+                <span class="switch-label">包含子文件夹</span>
+                <span class="toggle" id="subfolderToggle"><span class="knob"></span></span>
+                <input type="checkbox" id="subfolderSwitch">
+            </label>
+            <label>
+                <span class="switch-label">浏览器播放</span>
+                <span class="toggle" id="browserToggle"><span class="knob"></span></span>
+                <input type="checkbox" id="browserSwitch">
+            </label>
+        </div>
+    </div>
+    <div class="list-container" id="listContainer">
+        <div class="empty">选择文件夹以开始</div>
+    </div>
+    <div class="pagination-wrapper">
+        <span class="left">共 <span id="totalCount">0</span> 个项目</span>
+        <div class="center"><div id="pagination"></div></div>
+        <span class="right">由 <a href="//t.me/timharrys" target="_blank">D1r3ctor</a> 设计</span>
+    </div>
+</div>
+<script>
+    let currentPage = 1, totalPages = 1, totalItems = 0, scanFolder = '';
+    const perPage = 7;
+    const listContainer = document.getElementById('listContainer');
+    const pagination = document.getElementById('pagination');
+    const totalCount = document.getElementById('totalCount');
+    const searchInput = document.getElementById('searchInput');
 
-    # ---------- 搜索 ----------
-    def on_search(self, event=None):
-        keyword = self.search_entry.get().strip()
-        if not keyword:
-            self.filtered_items = self.video_items.copy()
-        else:
-            keyword_lower = keyword.lower()
-            self.filtered_items = [item for item in self.video_items if keyword_lower in item.name.lower()]
-        self.current_page = 1
-        self.total_pages = max(1, (len(self.filtered_items) + Config.PAGE_SIZE - 1) // Config.PAGE_SIZE)
-        self.update_page_label()
-        self.render_page()
+    function setupToggle(checkboxId, toggleId) {
+        const checkbox = document.getElementById(checkboxId);
+        const toggle = document.getElementById(toggleId);
+        if (!checkbox || !toggle) return;
+        if (checkbox.checked) toggle.classList.add('active');
+        checkbox.addEventListener('change', function() {
+            if (this.checked) toggle.classList.add('active');
+            else toggle.classList.remove('active');
+            this.dispatchEvent(new Event('change'));
+        });
+    }
+    setupToggle('subfolderSwitch', 'subfolderToggle');
+    setupToggle('browserSwitch', 'browserToggle');
 
-    # ---------- 选择文件夹 ----------
-    def select_folder(self):
-        folder = filedialog.askdirectory(title="选择视频文件夹")
-        if not folder:
-            return
-        self.btn_select.configure(text=os.path.basename(folder))
-        self.clear_cards()
-        self.video_items.clear()
-        self.filtered_items.clear()
-        self.loading = True
-        self.load_animate(0)
+    function loadFiles(page) {
+        if (!scanFolder) {
+            listContainer.innerHTML = '<div class="empty">请先选择文件夹</div>';
+            pagination.innerHTML = '';
+            return;
+        }
+        const keyword = searchInput.value.trim();
+        const url = `/api/files?page=${page}&per_page=${perPage}&keyword=${encodeURIComponent(keyword)}`;
+        fetch(url).then(r => r.json()).then(data => {
+            if (data.error) {
+                listContainer.innerHTML = `<div class="empty">${data.error}</div>`;
+                return;
+            }
+            totalItems = data.total;
+            totalPages = data.total_pages;
+            currentPage = data.page;
+            renderItems(data.items);
+            renderPagination();
+            totalCount.textContent = totalItems;
+        }).catch(e => {
+            listContainer.innerHTML = '<div class="empty">加载失败: ' + e.message + '</div>';
+        });
+    }
 
-        def scan_thread():
-            paths = self.scanner.scan(folder)
-            items = []
-            for p in paths:
-                try:
-                    items.append(VideoParser.parse_video(p))
-                except Exception as e:
-                    print(f"解析失败 {p}: {e}")
-            self.after(0, self.on_scan_done, items)
+    function renderItems(items) {
+        if (!items || items.length === 0) {
+            listContainer.innerHTML = '<div class="empty">未找到视频</div>';
+            return;
+        }
+        const containerHeight = listContainer.clientHeight;
+        const gap = 6;
+        const totalGap = (7 - 1) * gap;
+        const cardHeight = Math.max(48, (containerHeight - totalGap) / 7);
+        let html = '';
+        items.forEach(item => {
+            html += `
+                <div class="file-item" data-path="${escapeHtml(item.path)}" data-jump="${escapeHtml(item.jump_url)}" data-name="${escapeHtml(item.name)}" style="height: ${cardHeight}px;">
+                    <div class="top">
+                        <span class="name">${escapeHtml(item.name)}</span>
+                        <div class="actions">
+                            <button class="play-local">播放</button>
+                            <button class="play-web web">在浏览器中打开</button>
+                        </div>
+                    </div>
+                    <div class="meta">
+                        <span>${item.resolution} · ${item.duration} · ${item.size} · ${item.mtime}</span>
+                        <span class="title">${escapeHtml(item.title)}</span>
+                    </div>
+                </div>`;
+        });
+        listContainer.innerHTML = html;
+    }
 
-        threading.Thread(target=scan_thread, daemon=True).start()
+    function renderPagination() {
+        if (totalPages <= 1) {
+            pagination.innerHTML = '';
+            return;
+        }
+        const baseStyle = 'min-width:38px;height:34px;margin:0 1px;padding:0 11px;border-radius:9px;border:1.5px solid #d1d1d6;background:#fff;color:#1d1d1f;font-size:13.5px;font-weight:500;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,0.05);display:inline-flex;align-items:center;justify-content:center;';
+        const activeStyle = 'min-width:38px;height:34px;margin:0 1px;padding:0 11px;border-radius:9px;border:1.5px solid #007aff;background:#007aff;color:#fff;font-size:13.5px;font-weight:600;cursor:pointer;box-shadow:0 2px 7px rgba(0,122,255,0.25);display:inline-flex;align-items:center;justify-content:center;';
+        const navStyle = 'min-width:38px;height:34px;margin:0 1px;padding:0 10px;border-radius:9px;border:1.5px solid #d1d1d6;background:#fff;color:#007aff;font-size:14.5px;font-weight:500;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,0.05);display:inline-flex;align-items:center;justify-content:center;';
+        const disabledStyle = 'opacity:0.36;cursor:default;';
+        let html = '';
+        html += `<button class="page-btn" data-page="1" ${currentPage===1?'disabled':''} style="${navStyle}${currentPage===1?disabledStyle:''}">«</button>`;
+        html += `<button class="page-btn" data-page="${currentPage-1}" ${currentPage===1?'disabled':''} style="${navStyle}${currentPage===1?disabledStyle:''}">‹</button>`;
 
-    def load_animate(self, step):
-        if not self.loading:
-            self.load_label.configure(text="")
-            return
-        dots = [".", "..", "...", ""]
-        self.load_label.configure(text="加载中" + dots[step % len(dots)])
-        self.after(300, self.load_animate, step + 1)
+        const pages = [];
+        if (totalPages <= 7) {
+            for (let i = 1; i <= totalPages; i++) pages.push(i);
+        } else {
+            pages.push(1);
+            let start = Math.max(2, currentPage - 1);
+            let end = Math.min(totalPages - 1, currentPage + 1);
+            if (currentPage <= 3) { start = 2; end = 4; }
+            else if (currentPage >= totalPages - 2) { start = totalPages - 3; end = totalPages - 1; }
+            if (start > 2) pages.push('...');
+            for (let i = start; i <= end; i++) pages.push(i);
+            if (end < totalPages - 1) pages.push('...');
+            pages.push(totalPages);
+        }
 
-    def on_scan_done(self, items):
-        self.loading = False
-        self.load_label.configure(text="")
-        self.video_items = sorted(items, key=lambda x: natural_key(x.name))
-        self.search_entry.delete(0, 'end')
-        self.filtered_items = self.video_items.copy()
-        self.total_pages = max(1, (len(self.filtered_items) + Config.PAGE_SIZE - 1) // Config.PAGE_SIZE)
-        self.current_page = 1
-        self.update_page_label()
-        self.render_page()
+        pages.forEach(p => {
+            if (p === '...') {
+                html += `<span style="min-width:26px;height:34px;display:inline-flex;align-items:center;justify-content:center;color:#8e8e93;font-size:13.5px;user-select:none;">…</span>`;
+            } else if (p === currentPage) {
+                html += `<button class="page-num active" data-page="${p}" style="${activeStyle}">${p}</button>`;
+            } else {
+                html += `<button class="page-num" data-page="${p}" style="${baseStyle}">${p}</button>`;
+            }
+        });
 
-    def clear_cards(self):
-        for w in self.scroll_frame.winfo_children():
-            w.destroy()
+        html += `<button class="page-btn" data-page="${currentPage+1}" ${currentPage===totalPages?'disabled':''} style="${navStyle}${currentPage===totalPages?disabledStyle:''}">›</button>`;
+        html += `<button class="page-btn" data-page="${totalPages}" ${currentPage===totalPages?'disabled':''} style="${navStyle}${currentPage===totalPages?disabledStyle:''}">»</button>`;
+        pagination.innerHTML = html;
+    }
 
-    # ---------- 渲染 ----------
-    def render_page(self):
-        self.clear_cards()
-        if not self.filtered_items:
-            self.empty_label.pack(pady=60)
-            return
-        start = (self.current_page - 1) * Config.PAGE_SIZE
-        end = min(start + Config.PAGE_SIZE, len(self.filtered_items))
-        for idx, item in enumerate(self.filtered_items[start:end]):
-            card = ctk.CTkFrame(self.scroll_frame, fg_color=(Config.CARD_LIGHT, Config.CARD_DARK), corner_radius=10)
-            card.pack(fill="x", pady=(4, 0))
-            inner = ctk.CTkFrame(card, fg_color="transparent")
-            inner.pack(fill="x", padx=14, pady=10)
+    document.addEventListener('click', function(e) {
+        const target = e.target.closest('button');
+        if (!target) return;
+        if (target.classList.contains('page-btn') || target.classList.contains('page-num')) {
+            const page = parseInt(target.dataset.page);
+            if (page && page !== currentPage && page >= 1 && page <= totalPages) {
+                currentPage = page;
+                loadFiles(page);
+            }
+            return;
+        }
+        if (target.classList.contains('play-local')) {
+            const item = target.closest('.file-item');
+            if (item) {
+                const path = item.dataset.path;
+                if (path) window.open(`/api/play?path=${encodeURIComponent(path)}`, '_blank');
+            }
+            return;
+        }
+        if (target.classList.contains('play-web')) {
+            const item = target.closest('.file-item');
+            if (item) {
+                const jump = item.dataset.jump;
+                const name = item.dataset.name;
+                if (jump && jump.startsWith('http')) window.open(jump, '_blank');
+                else window.open(`https://www.bing.com/s?wd=${encodeURIComponent(name.replace(/\\s+/g, '+'))}`, '_blank');
+            }
+            return;
+        }
+    });
 
-            top = ctk.CTkFrame(inner, fg_color="transparent")
-            top.pack(fill="x")
-            ctk.CTkLabel(top, text=f"🎬 {item.name}", 
-                         font=ctk.CTkFont(size=15, weight="bold", family=("Microsoft YaHei", "Segoe UI", "Arial")),
-                         text_color=(Config.TEXT_PRIMARY_LIGHT, Config.TEXT_PRIMARY_DARK)).pack(side="left")
-            btn_frame = ctk.CTkFrame(top, fg_color="transparent")
-            btn_frame.pack(side="right")
-            ctk.CTkButton(btn_frame, text="本地", width=50, height=24, corner_radius=6,
-                          fg_color=Config.PRIMARY_BLUE, hover_color=Config.PRIMARY_BLUE_HOVER,
-                          command=partial(self.open_local, item.path)).pack(side="left", padx=2)
-            ctk.CTkButton(btn_frame, text="网页", width=50, height=24, corner_radius=6,
-                          fg_color=Config.PRIMARY_BLUE, hover_color=Config.PRIMARY_BLUE_HOVER,
-                          command=partial(self.open_web, item)).pack(side="left", padx=2)
+    document.getElementById('scanBtn').addEventListener('click', function() {
+        fetch('/api/select_folder').then(r => r.json()).then(data => {
+            if (data.error) { alert('无法打开文件夹选择器: ' + data.error); return; }
+            const folder = data.folder;
+            if (!folder) return;
+            scanFolder = folder;
+            listContainer.innerHTML = `<div class="empty scanning"><div class="spinner"></div><div style="margin-top: 11px; color: #8e8e93; font-size: 14.5px; font-weight: 450;">正在扫描…</div></div>`;
+            return fetch('/api/scan', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({folder: folder}) });
+        }).then(response => response ? response.json() : null).then(scanData => {
+            if (!scanData) return;
+            if (scanData.error) {
+                alert('扫描失败: ' + scanData.error);
+                listContainer.innerHTML = '<div class="empty">扫描出错，请重试</div>';
+            } else {
+                currentPage = 1;
+                loadFiles(1);
+            }
+        }).catch(e => {
+            alert('请求失败: ' + e.message);
+            listContainer.innerHTML = '<div class="empty">请求失败</div>';
+        });
+    });
 
-            bottom = ctk.CTkFrame(inner, fg_color="transparent")
-            bottom.pack(fill="x", pady=(4, 0))
-            meta = f"{item.resolution} · {item.duration_str} · {item.size_str} · {item.mtime}"
-            ctk.CTkLabel(bottom, text=meta, 
-                         font=ctk.CTkFont(size=12, family=("Microsoft YaHei", "Segoe UI", "Arial")),
-                         text_color=(Config.TEXT_SECONDARY_LIGHT, Config.TEXT_SECONDARY_DARK)).pack(side="left")
+    let searchTimer = null;
+    searchInput.addEventListener('input', function() {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => { currentPage = 1; loadFiles(1); }, 280);
+    });
 
-            if item.jump_url:
-                right_text = f"🔗 {item.jump_url}"
-                right_color = Config.LINK_COLOR
+    document.getElementById('exportBtn').addEventListener('click', function() {
+        if (!scanFolder) { alert('请先选择文件夹'); return; }
+        window.open('/api/export', '_blank');
+    });
+
+    document.getElementById('subfolderSwitch').addEventListener('change', function() {
+        const sub = this.checked;
+        const browser = document.getElementById('browserSwitch').checked;
+        fetch(`/api/config?scan_subfolder=${sub}&use_browser=${browser}`);
+    });
+    document.getElementById('browserSwitch').addEventListener('change', function() {
+        const browser = this.checked;
+        const sub = document.getElementById('subfolderSwitch').checked;
+        fetch(`/api/config?scan_subfolder=${sub}&use_browser=${browser}`);
+    });
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    let resizeTimer = null;
+    window.addEventListener('resize', function() {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => { if (scanFolder) loadFiles(currentPage); }, 180);
+    });
+
+    fetch('/api/config').then(r => r.json()).then(data => {
+        document.getElementById('subfolderSwitch').checked = data.scan_subfolder;
+        document.getElementById('browserSwitch').checked = data.use_browser;
+        if (data.scan_subfolder) document.getElementById('subfolderToggle').classList.add('active');
+        if (data.use_browser) document.getElementById('browserToggle').classList.add('active');
+    });
+</script>
+</body>
+</html>"""
+
+# ========== 启动服务器 ==========
+def start_server(port=8000):
+    actual_port = port
+    while True:
+        try:
+            with ThreadingHTTPServer(("", actual_port), MyHandler) as httpd:
+                print(f"服务已启动 → http://localhost:{actual_port}")
+                webbrowser.open(f"http://localhost:{actual_port}")
+                httpd.serve_forever()
+                break
+        except OSError as e:
+            if e.errno == 10048:
+                actual_port += 1
+                print(f"端口 {actual_port-1} 被占用，尝试 {actual_port}")
             else:
-                right_text = "无链接"
-                right_color = Config.VERSION_GRAY
-            ctk.CTkLabel(bottom, text=right_text, 
-                         font=ctk.CTkFont(size=12, family=("Microsoft YaHei", "Segoe UI", "Arial")),
-                         text_color=right_color).pack(side="right")
-
-            if idx < len(self.filtered_items[start:end]) - 1:
-                sep = ctk.CTkFrame(card, fg_color=(Config.SEPARATOR_LIGHT, Config.SEPARATOR_DARK), height=1)
-                sep.pack(fill="x", padx=14)
-
-    # ---------- 打开本地（支持浏览器开关） ----------
-    def open_local(self, path):
-        if not os.path.exists(path):
-            messagebox.showwarning("文件丢失", f"视频不存在：{path}")
-            return
-        if self.use_browser:
-            try:
-                with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r'http\shell\open\command') as key:
-                    cmd = winreg.QueryValue(key, None)
-                if cmd.startswith('"'):
-                    browser_path = cmd.split('"')[1]
-                else:
-                    browser_path = cmd.split()[0]
-                subprocess.Popen([browser_path, path], shell=False)
-            except Exception:
-                os.startfile(path)
-        else:
-            os.startfile(path)
-
-    def open_web(self, item):
-        if item.jump_url:
-            webbrowser.open(item.jump_url)
-        else:
-            webbrowser.open(Config.SEARCH_URL_TPL.format(filename=item.name.replace(" ", "+")))
-
-    # ---------- 分页 ----------
-    def update_page_label(self):
-        self.page_label.configure(text=f"{self.current_page} / {self.total_pages}")
-
-    def go_home(self):
-        self.current_page = 1
-        self.update_page_label()
-        self.render_page()
-
-    def go_last(self):
-        self.current_page = self.total_pages
-        self.update_page_label()
-        self.render_page()
-
-    def go_prev(self):
-        if self.current_page > 1:
-            self.current_page -= 1
-            self.update_page_label()
-            self.render_page()
-
-    def go_next(self):
-        if self.current_page < self.total_pages:
-            self.current_page += 1
-            self.update_page_label()
-            self.render_page()
+                raise
 
 if __name__ == "__main__":
-    ctk.set_appearance_mode("light")
-    ctk.set_default_color_theme("blue")
-    app = GlassVideoFinder()
-    app.mainloop()
+    start_server()
